@@ -4,10 +4,13 @@
  * michael{dot}leibman{at}gmail{dot}com
  * http://github.com/mleibman/slickgrid
  *
+ * updated 2016 by msg systems ag
+ * https://github.com/msg-systems/slickgrid
+ *
  * Distributed under MIT license.
  * All rights reserved.
  *
- * SlickGrid v2.2
+ * SlickGrid v2.2.1
  *
  * NOTES:
  *     Cell/row DOM manipulations are done directly bypassing jQuery's DOM manipulation methods.
@@ -2663,11 +2666,11 @@ if (typeof Slick === "undefined") {
       // walk up the tree
       var offsetParent = elem.offsetParent;
       while ((elem = elem.parentNode) != document.body) {
-        if (box.visible && elem.scrollHeight != elem.offsetHeight && $(elem).css("overflowY") != "visible") {
+        if (box.visible && elem.scrollHeight > elem.offsetHeight && $(elem).css("overflowY") != "visible") {
           box.visible = box.bottom > elem.scrollTop && box.top < elem.scrollTop + elem.clientHeight;
         }
 
-        if (box.visible && elem.scrollWidth != elem.offsetWidth && $(elem).css("overflowX") != "visible") {
+        if (box.visible && elem.scrollWidth > elem.offsetWidth && $(elem).css("overflowX") != "visible") {
           box.visible = box.right > elem.scrollLeft && box.left < elem.scrollLeft + elem.clientWidth;
         }
 
