@@ -4,13 +4,10 @@
  * michael{dot}leibman{at}gmail{dot}com
  * http://github.com/mleibman/slickgrid
  *
- * updated 2016 by msg systems ag
- * https://github.com/msg-systems/slickgrid
- *
  * Distributed under MIT license.
  * All rights reserved.
  *
- * SlickGrid v2.2.1
+ * SlickGrid v2.2.2
  *
  * NOTES:
  *     Cell/row DOM manipulations are done directly bypassing jQuery's DOM manipulation methods.
@@ -60,6 +57,7 @@ if (typeof Slick === "undefined") {
     var defaults = {
       explicitInitialization: false,
       rowHeight: 25,
+      dynRowHeight: false,
       defaultColumnWidth: 80,
       enableAddRow: false,
       leaveSpaceForNewRows: false,
@@ -147,6 +145,7 @@ if (typeof Slick === "undefined") {
     var editController;
 
     var rowsCache = {};
+    var rowsPositionCache = {};
     var renderedRows = 0;
     var numVisibleRows;
     var prevScrollTop = 0;
@@ -922,14 +921,16 @@ if (typeof Slick === "undefined") {
 
     function createCssRules() {
       $style = $("<style type='text/css' rel='stylesheet' />").appendTo($("head"));
-      var rowHeight = (options.rowHeight - cellHeightDiff);
       var rules = [
         "." + uid + " .slick-header-column { left: 1000px; }",
         "." + uid + " .slick-top-panel { height:" + options.topPanelHeight + "px; }",
-        "." + uid + " .slick-headerrow-columns { height:" + options.headerRowHeight + "px; }",
-        "." + uid + " .slick-cell { height:" + rowHeight + "px; }",
-        "." + uid + " .slick-row { height:" + options.rowHeight + "px; }"
+        "." + uid + " .slick-headerrow-columns { height:" + options.headerRowHeight + "px; }"
       ];
+      if (!options.dynRowHeight || n > 1) {
+        var rowHeight = (options.rowHeight - cellHeightDiff);
+        rules.push("." + uid + " .slick-cell { height:" + rowHeight + "px; }");
+        rules.push("." + uid + " .slick-row { height:" + options.rowHeight + "px; }");
+      }
 
       for (var i = 0; i < columns.length; i++) {
         rules.push("." + uid + " .l" + i + " { }");
@@ -1327,11 +1328,33 @@ if (typeof Slick === "undefined") {
     // Rendering / Scrolling
 
     function getRowTop(row) {
-      return options.rowHeight * row - offset;
+      var rowOffset = options.rowHeight * row - offset;
+      if (options.dynRowHeight && n == 1 && rowsPositionCache[row] && rowsPositionCache[row].offset >= 0) {
+        rowOffset = rowsPositionCache[row].offset;
+      }
+      return rowOffset;
     }
 
     function getRowFromPosition(y) {
-      return Math.floor((y + offset) / options.rowHeight);
+      var result = Math.floor((y + offset) / options.rowHeight);
+      if (options.dynRowHeight && n == 1) {
+        var row;
+        var rowFromPositionFoundInCache = false;
+        for (row in rowsPositionCache) {
+          row = parseInt(row, 10);
+          if (y >= rowsPositionCache[row].offset && y < rowsPositionCache[row].offset + rowsPositionCache[row].height) {
+            rowFromPositionFoundInCache = true;
+            result = row;
+            break;
+          }
+        }
+        // the y value is bigger than the offset of the last row, this is possible e.g. when a row has to be scrolled into view,
+        // but this row is not in the rowsPositionCache yet
+        if (!rowFromPositionFoundInCache && row !== undefined && rowsPositionCache[row].offset <= y) {
+            result = row + Math.floor((y - (rowsPositionCache[row].offset + rowsPositionCache[row].height)) / options.rowHeight);
+        }
+      }
+      return result;
     }
 
     function scrollTo(y) {
@@ -1507,6 +1530,9 @@ if (typeof Slick === "undefined") {
     }
 
     function removeRowFromCache(row) {
+      if (options.dynRowHeight && n == 1) {
+        removeRowFromPositionCache(row);
+      }
       var cacheEntry = rowsCache[row];
       if (!cacheEntry) {
         return;
@@ -1518,11 +1544,19 @@ if (typeof Slick === "undefined") {
       } else {
         $canvas[0].removeChild(cacheEntry.rowNode);
       }
-      
+
       delete rowsCache[row];
       delete postProcessedRows[row];
       renderedRows--;
       counter_rows_removed++;
+    }
+
+    function removeRowFromPositionCache(row) {
+      var cacheEntry = rowsPositionCache[row];
+      if (!cacheEntry) {
+        return;
+      }
+      delete rowsPositionCache[row]
     }
 
     function invalidateRows(rows) {
@@ -1653,6 +1687,7 @@ if (typeof Slick === "undefined") {
 
       var oldH = h;
       th = Math.max(options.rowHeight * numberOfRows, viewportH - scrollbarDimensions.height);
+      var oldN = n;
       if (th < maxSupportedCssHeight) {
         // just one page
         h = ph = th;
@@ -1664,6 +1699,10 @@ if (typeof Slick === "undefined") {
         ph = h / 100;
         n = Math.floor(th / ph);
         cj = (th - h) / (n - 1);
+      }
+      if (options.dynRowHeight && oldN != n) {
+        removeCssRules();
+        createCssRules();
       }
 
       if (h !== oldH) {
@@ -1701,9 +1740,15 @@ if (typeof Slick === "undefined") {
         viewportLeft = scrollLeft;
       }
 
+      var top = getRowFromPosition(viewportTop);
+      var bottom = getRowFromPosition(viewportTop + viewportH) + 1;
+      if (options.dynRowHeight && n == 1) {
+        bottom = Math.min(getDataLengthIncludingAddNew() - 1, bottom);
+        top = Math.min(top, bottom);
+      }
       return {
-        top: getRowFromPosition(viewportTop),
-        bottom: getRowFromPosition(viewportTop + viewportH) + 1,
+        top: top,
+        bottom: bottom,
         leftPx: viewportLeft,
         rightPx: viewportLeft + viewportW
       };
@@ -1949,8 +1994,34 @@ if (typeof Slick === "undefined") {
       var visible = getVisibleRange();
       var rendered = getRenderedRange();
 
+      if (options.dynRowHeight && n == 1) {
+        // deleted rows might have been larger than the default height - when they vanish from rendering and if they where in front of the current scrollTop
+        // then we must adjust the scrollTop to the overall missing offsetDelta
+        var offsetDelDelta = 0;
+        for (var i in rowsCache) {
+          if (((i = parseInt(i, 10)) !== activeRow) && (i < rendered.top || i > rendered.bottom) &&
+              rowsPositionCache[i] && rowsPositionCache[i].offset < scrollTop) {
+            offsetDelDelta += rowsPositionCache[i].offsetDelta;
+          }
+        }
+        if (offsetDelDelta) {
+          $viewport[0].scrollTop = (scrollTop = prevScrollTop = scrollTop - offsetDelDelta);
+        }
+      }
+
       // remove rows no longer in the viewport
       cleanupRows(rendered);
+
+      // remember all new rows to determine later on which of those were added before the scrollTop
+      var newRows = [];
+      if (options.dynRowHeight && n == 1) {
+        for (var i = rendered.top, ii = rendered.bottom; i <= ii; i++) {
+          if (rowsCache[i]) {
+            continue;
+          }
+          newRows.push(i);
+        }
+      }
 
       // add new rows & missing cells in existing rows
       if (lastRenderedScrollLeft != scrollLeft) {
@@ -1960,6 +2031,25 @@ if (typeof Slick === "undefined") {
       // render missing rows
       renderRows(rendered);
 
+      if (options.dynRowHeight && n == 1) {
+        // newly added rows might be added in front of the current scrollTop and might be larger then the default height - in that case we must also adjust the
+        // scrollTop to the overall added offsetDelta
+        var offsetAddDelta = 0;
+        updateRowAndCellHeights(rendered);
+        updateCanvasHeight(rendered);
+        updateRowPositions();
+        // determine the offsetDelta of all new rows that are in front of the scrollTop
+        newRows.forEach(function(i) {
+          if (rowsPositionCache[i] && rowsPositionCache[i].offset < scrollTop) {
+            offsetAddDelta += rowsPositionCache[i].offsetDelta;
+          }
+        });
+        if (offsetAddDelta) {
+          $viewport[0].scrollTop = (scrollTop = prevScrollTop = scrollTop + offsetAddDelta);
+        }
+        handleActiveCellPositionChange();
+      }
+
       postProcessFromRow = visible.top;
       postProcessToRow = Math.min(getDataLengthIncludingAddNew() - 1, visible.bottom);
       startPostProcessing();
@@ -1967,6 +2057,51 @@ if (typeof Slick === "undefined") {
       lastRenderedScrollTop = scrollTop;
       lastRenderedScrollLeft = scrollLeft;
       h_render = null;
+    }
+
+    function updateRowAndCellHeights(range) {
+      var lastRow;
+      for (var row in rowsCache) {
+        row = parseInt(row, 10);
+        // active rows can be out of the rendered range but in the rowsCache
+        if (row >= range.top && row <= range.bottom && rowsCache[row] && rowsCache[row].rowNode) {
+          var $rowNode = $(rowsCache[row].rowNode);
+          $rowNode.children().height("");
+          var rowHeight = Math.max(options.rowHeight, maximumRenderedCellHeightOfRow($rowNode));
+          $rowNode.height(rowHeight);
+          $rowNode.children().height(rowHeight - cellHeightDiff);
+
+          var offset = lastRow !== undefined ? rowsPositionCache[lastRow].offset + rowsPositionCache[lastRow].height : row * options.rowHeight;
+          rowsPositionCache[row] = {height: rowHeight, offset: offset, offsetDelta: rowHeight - options.rowHeight};
+          lastRow = row;
+        }
+      }
+    }
+
+    function updateCanvasHeight(range) {
+      var oldH = parseInt($canvas.css("height"), 10);
+      var dataLengthIncludingAddNew = getDataLengthIncludingAddNew();
+      var numberOfRows = dataLengthIncludingAddNew +
+        (options.leaveSpaceForNewRows ? numVisibleRows - 1 : 0);
+      var newH = options.rowHeight * numberOfRows;
+      for (var row in rowsPositionCache) {
+        row = parseInt(row, 10);
+        // active rows can be out of the rendered range but in the rowsCache
+        if(row >= range.top && row <= range.bottom){
+          newH += rowsPositionCache[row].offsetDelta;
+        }
+      }
+      newH = Math.max(newH, viewportH - scrollbarDimensions.height);
+      if (oldH != newH) {
+        h = ph = th = newH;
+        $canvas.css("height", newH);
+      }
+    }
+
+    function maximumRenderedCellHeightOfRow($rowNode) {
+      return Math.max.apply(null, $rowNode.children().map(function() {
+        return $(this).outerHeight(true);
+      }).get());
     }
 
     function handleHeaderRowScroll() {
@@ -2165,7 +2300,7 @@ if (typeof Slick === "undefined") {
           $canvas[0].removeChild(zombieRowNodeFromLastMouseWheelEvent);
           zombieRowNodeFromLastMouseWheelEvent = null;
         }
-        rowNodeFromLastMouseWheelEvent = rowNode;      
+        rowNodeFromLastMouseWheelEvent = rowNode;
       }
     }
 
@@ -2220,7 +2355,7 @@ if (typeof Slick === "undefined") {
             cancelEditAndSetFocus();
           } else if (e.which == 34) {
             navigatePageDown();
-            handled = true;           
+            handled = true;
           } else if (e.which == 33) {
             navigatePageUp();
             handled = true;
@@ -2428,6 +2563,9 @@ if (typeof Slick === "undefined") {
 
       var y1 = getRowTop(row);
       var y2 = y1 + options.rowHeight - 1;
+      if (options.dynRowHeight && n == 1 && rowsPositionCache[row] && rowsPositionCache[row].height) {
+        y2 = y1 + rowsPositionCache[row].height - 1;
+      }
       var x1 = 0;
       for (var i = 0; i < cell; i++) {
         x1 += columns[i].width;
@@ -2738,23 +2876,62 @@ if (typeof Slick === "undefined") {
     }
 
     function scrollRowIntoView(row, doPaging) {
-      var rowAtTop = row * options.rowHeight;
-      var rowAtBottom = (row + 1) * options.rowHeight - viewportH + (viewportHasHScroll ? scrollbarDimensions.height : 0);
-
-      // need to page down?
-      if ((row + 1) * options.rowHeight > scrollTop + viewportH + offset) {
-        scrollTo(doPaging ? rowAtTop : rowAtBottom);
-        render();
-      }
-      // or page up?
-      else if (row * options.rowHeight < scrollTop + offset) {
-        scrollTo(doPaging ? rowAtBottom : rowAtTop);
-        render();
+      var rowAtTop, rowAtBottom;
+      if (options.dynRowHeight && n == 1) {
+          if (rowsPositionCache[row]) {
+              rowAtTop = rowsPositionCache[row].offset;
+              rowAtBottom = rowAtTop + rowsPositionCache[row].height - viewportH + (viewportHasHScroll ? scrollbarDimensions.height : 0);
+              // need to page down?
+              if (rowAtTop + rowsPositionCache[row].height > scrollTop + viewportH + offset) {
+                  scrollTo(doPaging ? rowAtTop : rowAtBottom);
+                  render();
+              }
+              // or page up?
+              else if (rowAtTop < scrollTop + offset) {
+                  scrollTo(doPaging ? rowAtBottom : rowAtTop);
+                  render();
+              }
+          } else {
+              // the row that should be scrolled into view is not in the rendered range/ not in the rowsPositionCache
+              rowAtTop = 0;
+              for (var i = 0; i < row; i++) {
+                  rowAtTop += rowsPositionCache[i] ? rowsPositionCache[i].height : options.rowHeight
+              }
+              rowAtBottom = rowAtTop + options.rowHeight - viewportH + (viewportHasHScroll ? scrollbarDimensions.height : 0);
+              if (rowAtTop + options.rowHeight > scrollTop + viewportH + offset) {
+                  scrollTo(doPaging ? rowAtTop : rowAtBottom);
+                  render();
+                  scrollRowIntoView(row, doPaging);
+              }
+              // or page up?
+              else if (rowAtTop < scrollTop + offset) {
+                  scrollTo(doPaging ? rowAtBottom : rowAtTop);
+                  render();
+                  scrollRowIntoView(row, doPaging);
+              }
+          }
+      } else {
+        rowAtTop = row * options.rowHeight;
+        rowAtBottom = (row + 1) * options.rowHeight - viewportH + (viewportHasHScroll ? scrollbarDimensions.height : 0);
+        // need to page down?
+        if ((row + 1) * options.rowHeight > scrollTop + viewportH + offset) {
+          scrollTo(doPaging ? rowAtTop : rowAtBottom);
+          render();
+        }
+        // or page up?
+        else if (row * options.rowHeight < scrollTop + offset) {
+          scrollTo(doPaging ? rowAtBottom : rowAtTop);
+          render();
+        }
       }
     }
 
     function scrollRowToTop(row) {
-      scrollTo(row * options.rowHeight);
+      if (options.dynRowHeight && n == 1 && rowsPositionCache[row]) {
+        scrollTo(rowsPositionCache[row].offset);
+      } else {
+        scrollTo(row * options.rowHeight);
+      }
       render();
     }
 
@@ -2777,7 +2954,7 @@ if (typeof Slick === "undefined") {
         var prevActivePosX = activePosX;
         while (cell <= activePosX) {
           if (canCellBeActive(row, cell)) {
-            prevCell = cell;  
+            prevCell = cell;
           }
           cell += getColspan(row, cell);
         }
@@ -3301,7 +3478,7 @@ if (typeof Slick === "undefined") {
     // Public API
 
     $.extend(this, {
-      "slickGridVersion": "2.1",
+      "slickGridVersion": "2.2.2",
 
       // Events
       "onScroll": new Slick.Event(),
