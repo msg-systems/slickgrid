@@ -12,6 +12,7 @@ All changes on SlickGrid try to assure that the existing SlickGrid code does not
 
 * Fixed strange behaviour of collapsing/expanding groups when using dataviews.
 	See also here for further information: https://github.com/mleibman/SlickGrid/pull/898
+* Fixed behaviour of hidden cell editor in different Zoom-Level
 
 ## Use of grid option 'dynRowHeight'
 
