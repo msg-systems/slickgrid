@@ -14,6 +14,10 @@ All changes on SlickGrid try to assure that the existing SlickGrid code does not
 	See also here for further information: https://github.com/mleibman/SlickGrid/pull/898
 * Fixed behaviour of hidden cell editor in different Zoom-Level
 
+## Changes
+
+* added events to __DataView__ for updating (`onItemUpdated`), deletion (`onItemDeleted`) and add (`onItemAdded`) from a item -> event returns item and - if possible - index
+
 ## Use of grid option 'dynRowHeight'
 
 If the rows of the grid should dynamically adapt their height to their content, just set the grid option `dynRowHeight` to `true`. 
