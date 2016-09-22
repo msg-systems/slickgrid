@@ -76,6 +76,9 @@
     var onRowCountChanged = new Slick.Event();
     var onRowsChanged = new Slick.Event();
     var onPagingInfoChanged = new Slick.Event();
+    var onItemDeleted = new Slick.Event();
+    var onItemAdded = new Slick.Event();
+    var onItemUpdated = new Slick.Event();
 
     options = $.extend(true, {}, defaults, options);
 
@@ -334,22 +337,27 @@
       }
       updated[id] = true;
       refresh();
+      onItemUpdated.notify({item: items[idxById[id]], index: idxById[id]}, null, self);
     }
 
     function insertItem(insertBefore, item) {
       items.splice(insertBefore, 0, item);
       updateIdxById(insertBefore);
       refresh();
+      onItemAdded.notify({item: item, index: insertBefore}, null, self);
     }
 
     function addItem(item) {
       items.push(item);
-      updateIdxById(items.length - 1);
+      var idx = items.length - 1;
+      updateIdxById(idx);
       refresh();
+      onItemAdded.notify({item: item, index: idx}, null, self);
     }
 
     function deleteItem(id) {
       var idx = idxById[id];
+      var item = items[idx];
       if (idx === undefined) {
         throw "Invalid id";
       }
@@ -357,6 +365,7 @@
       items.splice(idx, 1);
       updateIdxById(idx);
       refresh();
+      onItemDeleted.notify({item: item}, null, self);
     }
 
     function getLength() {
@@ -1018,7 +1027,10 @@
       // events
       "onRowCountChanged": onRowCountChanged,
       "onRowsChanged": onRowsChanged,
-      "onPagingInfoChanged": onPagingInfoChanged
+      "onPagingInfoChanged": onPagingInfoChanged,
+      "onItemDeleted": onItemDeleted,
+      "onItemAdded": onItemAdded,
+      "onItemUpdated": onItemUpdated
     });
   }
 
